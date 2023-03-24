@@ -3,12 +3,14 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * This is just a demo for you, please run it on JDK17 (some statements may be not allowed in lower version).
  * This is just a demo, and you can extend and implement functions
  * based on this demo, or implement it in a different way.
  */
+
 public class OnlineCoursesAnalyzer {
 
     List<Course> courses = new ArrayList<>();
@@ -43,34 +45,136 @@ public class OnlineCoursesAnalyzer {
         }
     }
 
-    //1
+    //1. TreeMap Sort?
     public Map<String, Integer> getPtcpCountByInst() {
-        return null;
+        return courses.stream().collect(Collectors.groupingBy(Course::getInstitution,
+                TreeMap::new, Collectors.summingInt(Course::getParticipants)));
     }
 
     //2
     public Map<String, Integer> getPtcpCountByInstAndSubject() {
-        return null;
+        Map<String, Integer> result = new HashMap<>();
+        courses.forEach(course -> {
+            String combine = course.getInstitution() + "-" + course.getSubject();
+            result.put(combine, result.getOrDefault(combine, 0) + course.getParticipants());
+        });
+        return result.entrySet().stream()
+                .sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (u, v) -> u, LinkedHashMap::new));
     }
 
     //3
     public Map<String, List<List<String>>> getCourseListOfInstructor() {
-        return null;
+        Map<String, List<Course>> instructors = new HashMap<>();
+        for (Course c : courses) {
+            for (String instructor : c.getInstructorList()) {
+                List<Course> courseList = instructors.getOrDefault(instructor, new ArrayList<>());
+                courseList.add(c);
+                instructors.put(instructor, courseList);
+            }
+        }
+
+        return instructors.entrySet().stream()
+                .collect(Collectors.toMap(Map.Entry::getKey,
+                        entry -> {
+                            List<Course> courseList = entry.getValue();
+
+                            List<String> independent = courseList.stream()
+                                    .filter(course -> course.getInstructorList().size() == 1)
+                                    .map(Course::getTitle)
+                                    .distinct()
+                                    .sorted(String::compareTo)
+                                    .collect(Collectors.toList());
+
+                            List<String> cooperate = courseList.stream()
+                                    .filter(course -> course.getInstructorList().size() > 1)
+                                    .map(Course::getTitle)
+                                    .distinct()
+                                    .sorted(String::compareTo)
+                                    .collect(Collectors.toList());
+
+                            return Arrays.asList(independent, cooperate);
+                        }
+                ));
     }
 
     //4
     public List<String> getCourses(int topK, String by) {
-        return null;
+        Comparator<Course> comparator;
+        if (by.equals("hours")) {
+            comparator = Comparator.comparing(Course::getTotalHours).reversed().thenComparing(Course::getTitle);
+        } else if (by.equals("participants")) {
+            comparator = Comparator.comparing(Course::getParticipants).reversed().thenComparing(Course::getTitle);
+        } else {
+            throw new IllegalArgumentException("Invalid sort type");
+        }
+        List<Course> sortedCourses = courses.stream().sorted(comparator).distinct().limit(topK).toList();
+        List<String> result = new ArrayList<>();
+        for (Course course : sortedCourses) {
+            result.add(course.getTitle());
+        }
+        return result;
     }
 
     //5
     public List<String> searchCourses(String courseSubject, double percentAudited, double totalCourseHours) {
-        return null;
+        return courses.stream()
+                .filter(c -> c.getSubject().toLowerCase().contains(courseSubject.toLowerCase()))
+                .filter(c -> c.getPercentAudited() >= percentAudited)
+                .filter(c -> c.getTotalHours() <= totalCourseHours)
+                .sorted(Comparator.comparing(Course::getTitle))
+                .map(Course::getTitle)
+                .distinct()
+                .collect(Collectors.toList());
     }
 
     //6
     public List<String> recommendCourses(int age, int gender, int isBachelorOrHigher) {
-        return null;
+        // Step 1: Calculate the average Median Age, average Male, and average Bachelor's Degree or Higher for each course
+        Map<String, double[]> total_sum = courses.stream()
+                .collect(Collectors.toMap(Course::getNumber,
+                        c -> new double[]{c.getMedianAge(), c.getPercentMale(), c.getPercentDegree()},
+                        (a, b) -> {
+                            double[] result = new double[a.length];
+                            for (int i = 0; i < a.length; i++) {
+                                result[i] = (a[i] + b[i]);
+                            }
+                            return result;
+                        }
+                ));
+
+        Map<String, double[]> average = new HashMap<>();
+        for (Map.Entry<String, double[]> entry : total_sum.entrySet()) {
+            String number = entry.getKey();
+            if (!average.containsKey(number)) {
+                double[] sum = entry.getValue();
+                int count = courses.stream().filter(c -> c.getNumber().equals(number)).toArray().length;
+                double[] result = new double[sum.length];
+                for (int i = 0; i < sum.length; i++) {
+                    result[i] = sum[i] / count;
+                }
+                average.put(number, result);
+            }
+        }
+
+        // Step 2: Calculate similarity value between input user and each course
+        Map<String, Double> similarity = average.entrySet().stream()
+                .collect(Collectors.toMap(Map.Entry::getKey,
+                        e -> Math.pow(age - e.getValue()[0], 2)
+                                + Math.pow(gender * 100 - e.getValue()[1], 2)
+                                + Math.pow(isBachelorOrHigher * 100 - e.getValue()[2], 2)));
+
+        // Step 3: Return the top 10 courses with the smallest similarity value
+        return similarity.entrySet().stream()
+                .sorted(Map.Entry.comparingByValue())
+                .map(Map.Entry::getKey)
+                .map(courseNumber -> courses.stream()
+                        .filter(course -> course.getNumber().equals(courseNumber))
+                        .max(Comparator.comparing(Course::getLaunchDate)).orElse(null)).filter(Objects::nonNull)
+                .map(Course::getTitle)
+                .distinct()
+                .limit(10)
+                .collect(Collectors.toList());
     }
 
 }
@@ -81,6 +185,8 @@ class Course {
     Date launchDate;
     String title;
     String instructors;
+
+    String[] instructor_list;
     String subject;
     int year;
     int honorCode;
@@ -118,6 +224,7 @@ class Course {
         if (instructors.startsWith("\"")) instructors = instructors.substring(1);
         if (instructors.endsWith("\"")) instructors = instructors.substring(0, instructors.length() - 1);
         this.instructors = instructors;
+        this.instructor_list = instructors.split(", ");
         if (subject.startsWith("\"")) subject = subject.substring(1);
         if (subject.endsWith("\"")) subject = subject.substring(0, subject.length() - 1);
         this.subject = subject;
@@ -138,5 +245,78 @@ class Course {
         this.percentMale = percentMale;
         this.percentFemale = percentFemale;
         this.percentDegree = percentDegree;
+    }
+
+    public String getInstitution() {
+        return institution;
+    }
+
+    public String getNumber() {
+        return number;
+    }
+
+    public Date getLaunchDate() {
+        return launchDate;
+    }
+
+    public String getTitle() {
+        return title;
+    }
+
+    public String getInstructors() {
+        return instructors;
+    }
+
+    public List<String> getInstructorList() {
+        return List.of(instructor_list);
+    }
+
+    public String getSubject() {
+        return subject;
+    }
+
+    public int getParticipants() {
+        return participants;
+    }
+
+    public int getAudited() {
+        return audited;
+    }
+
+    public double getTotalHours() {
+        return totalHours;
+    }
+
+    public double getPercentAudited() {
+        return percentAudited;
+    }
+
+    public double getMedianAge() {
+        return medianAge;
+    }
+
+    public double getPercentMale() {
+        return percentMale;
+    }
+
+    public double getPercentFemale() {
+        return percentFemale;
+    }
+
+    public double getPercentDegree() {
+        return percentDegree;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        Course c = (Course) o;
+        return Objects.equals(title, c.title);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(title);
     }
 }
